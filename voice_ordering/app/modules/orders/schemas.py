@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from decimal import Decimal
 
@@ -74,7 +75,7 @@ class SessionOut(BaseModel):
     @classmethod
     def from_session(cls, s: Session, now: datetime) -> "SessionOut":
         def left(t: datetime) -> int:
-            return max(0, int((t - now).total_seconds()))
+            return max(0, math.ceil((t - now).total_seconds()))
 
         live = s.state in (State.ORDERING, State.PENDING_CONFIRMATION)
         pending = s.state == State.PENDING_CONFIRMATION and s.confirm_expires_at
