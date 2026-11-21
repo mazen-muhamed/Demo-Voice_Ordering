@@ -1,0 +1,130 @@
+# syntax=docker/dockerfile:1.7
+#
+# FreeSWITCH 1.10.12 + mod_audio_stream (community edition).
+#
+# mod_audio_stream is NOT in any stock FreeSWITCH image, so it is compiled
+# against the FreeSWITCH built in the first stage.  First build is slow
+# (roughly 25-40 min on a laptop); later builds hit the layer cache.
+#
+# Licensing note: mod_audio_stream Community Edition is AGPL-3.0-only with a
+# FreeSWITCH linking exception.  Fine for this demo; review before shipping.
+
+ARG DEBIAN_RELEASE=bookworm
+ARG FS_VERSION=1.10.12
+
+# --------------------------------------------------------------------------
+# Stage 1: build FreeSWITCH + mod_audio_stream
+# --------------------------------------------------------------------------
+FROM debian:${DEBIAN_RELEASE} AS builder
+
+ARG FS_VERSION
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential autoconf automake libtool libtool-bin pkg-config \
+        cmake git ca-certificates \
+        libssl-dev libcurl4-openssl-dev libpcre3-dev libspeexdsp-dev \
+        libsqlite3-dev libedit-dev libncurses-dev libjpeg-dev libtiff-dev \
+        libxml2-dev zlib1g-dev libevent-dev libsndfile1-dev uuid-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# FreeSWITCH 1.10.x hard-requires spandsp >= 3.0 and sofia-sip-ua >= 1.13.17,
+# and Debian bookworm packages neither.  Build both into the same prefix so
+# the runtime COPY picks up the shared libraries too.
+ENV PKG_CONFIG_PATH=/usr/local/freeswitch/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/usr/local/freeswitch/lib
+
+WORKDIR /src
+# NOTE: do not pass --disable-tests.  spandsp's configure tests `-n`
+# (non-empty), so --disable-tests would actually enable the test build and
+# then fail on missing sox/netpbm.
+RUN git clone --depth 1 --branch v3.1.1 \
+        https://github.com/freeswitch/spandsp.git \
+    && cd spandsp \
+    && ./bootstrap.sh \
+    && ./configure --prefix=/usr/local/freeswitch --disable-doc \
+    && make -j"$(nproc)" \
+    && make install
+
+RUN git clone --depth 1 --branch v1.13.17 \
+        https://github.com/freeswitch/sofia-sip.git \
+    && cd sofia-sip \
+    && ./bootstrap.sh \
+    && ./configure --prefix=/usr/local/freeswitch \
+    && make -j"$(nproc)" \
+    && make install
+
+# FreeSWITCH core's pkg-config check wants both speex and speexdsp.
+# Kept in its own layer so the spandsp/sofia-sip builds above stay cached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libspeex-dev yasm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch v${FS_VERSION} \
+        https://github.com/signalwire/freeswitch.git freeswitch
+
+WORKDIR /src/freeswitch
+RUN ./bootstrap.sh -j
+
+# Minimal module set: exactly what the demo dialplan + ESL listener need.
+# mod_audio_stream is built separately below and loaded at runtime.
+COPY docker/freeswitch/modules.conf /src/freeswitch/modules.conf
+
+RUN ./configure --prefix=/usr/local/freeswitch \
+    && make -j"$(nproc)" \
+    && make install
+
+# --- mod_audio_stream ------------------------------------------------------
+# CMake build; libwsc is a git submodule, hence --recurse-submodules.
+# PKG_CONFIG_PATH already points at the prefix built above.
+WORKDIR /src
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/amigniter/mod_audio_stream.git \
+    && cd mod_audio_stream \
+    && cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local/freeswitch \
+    && cmake --build build -j"$(nproc)" \
+    && cmake --install build \
+    && test -f /usr/local/freeswitch/lib/freeswitch/mod/mod_audio_stream.so
+
+# --------------------------------------------------------------------------
+# Stage 2: runtime
+# --------------------------------------------------------------------------
+FROM debian:${DEBIAN_RELEASE} AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Runtime libraries only (no compilers / -dev packages).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 libcurl4 libpcre3 libspeex1 libspeexdsp1 libsqlite3-0 \
+        libedit2 libncurses6 libjpeg62-turbo libtiff6 libxml2 zlib1g \
+        libevent-2.1-7 libevent-pthreads-2.1-7 libsndfile1 libuuid1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/freeswitch /usr/local/freeswitch
+# Replace the vanilla config wholesale so default users/profiles cannot leak in.
+# The entrypoint passes -conf explicitly; also drop the make-install default
+# config dir so a bare `freeswitch` invocation cannot fall back to it.
+RUN rm -rf /usr/local/freeswitch/conf /usr/local/freeswitch/etc/freeswitch
+COPY docker/freeswitch/conf /usr/local/freeswitch/conf
+COPY docker/freeswitch/entrypoint.sh /usr/local/bin/fs-entrypoint
+
+RUN chmod +x /usr/local/bin/fs-entrypoint \
+    && useradd --uid 1000 --user-group --no-create-home \
+        --home-dir /usr/local/freeswitch \
+        --shell /usr/sbin/nologin freeswitch \
+    && mkdir -p /usr/local/freeswitch/log /usr/local/freeswitch/run \
+        /usr/local/freeswitch/db /usr/local/freeswitch/recordings \
+        /usr/local/freeswitch/storage \
+    && chown -R freeswitch:freeswitch /usr/local/freeswitch
+
+ENV PATH=/usr/local/freeswitch/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/freeswitch/lib
+
+# Host networking is used by compose, so EXPOSE is documentation only.
+EXPOSE 5060/udp 5060/tcp 8021/tcp 16384-16484/udp
+
+USER freeswitch
+ENTRYPOINT ["/usr/local/bin/fs-entrypoint"]

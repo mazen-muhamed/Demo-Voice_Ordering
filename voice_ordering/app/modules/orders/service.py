@@ -1,3 +1,4 @@
+import asyncio
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -31,8 +32,10 @@ class OrderingService:
         store: InMemoryStore,
         hub: MonitorHub,
         now: Callable[[], datetime] = _utcnow,
+        event_log=None,
     ) -> None:
         self.menu, self.store, self.hub, self._now = menu, store, hub, now
+        self.event_log = event_log  # optional PgEventLog (None -> no persistence)
 
     # ---------- helpers ----------
     def view(self, s: Session) -> SessionOut:
@@ -42,6 +45,9 @@ class OrderingService:
         await self.hub.broadcast(
             {"type": type_, "session": self.view(s).model_dump(mode="json"), **extra}
         )
+        if self.event_log is not None:
+            payload = {"type": type_, "session": self.view(s).model_dump(mode="json"), **extra}
+            await asyncio.to_thread(self.event_log.write, s.id, s.state.value, type_, payload)
 
     def _touch(self, s: Session) -> None:
         s.updated_at = self._now()
@@ -73,6 +79,17 @@ class OrderingService:
         if self._expire_if_due(s):
             await self._emit("session_expired", s)
         return s
+
+    def find_by_caller(self, caller: str) -> Session | None:
+        """Latest live session for a caller key.
+
+        The ESL listener keys calls by FreeSWITCH's call UUID, so this is how
+        it resolves a DTMF press to the session the pipeline is filling.
+        """
+        for s in reversed(self.store.all()):
+            if s.caller_number == caller and s.state not in TERMINAL:
+                return s
+        return None
 
     async def _active(self, sid: str) -> Session:
         s = await self.get(sid)

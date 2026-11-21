@@ -75,6 +75,8 @@ class SessionOut(BaseModel):
     @classmethod
     def from_session(cls, s: Session, now: datetime) -> "SessionOut":
         def left(t: datetime) -> int:
+            # Round up: a 30 s TTL must read 30 immediately after being set,
+            # not 29 from int() truncation of 29.999 s.
             return max(0, math.ceil((t - now).total_seconds()))
 
         live = s.state in (State.ORDERING, State.PENDING_CONFIRMATION)

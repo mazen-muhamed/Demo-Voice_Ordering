@@ -1,0 +1,15 @@
+<include>
+  <!-- Demo credentials: extension 1000 / password 1234. -->
+  <X-PRE-PROCESS cmd="set" data="default_password=1234"/>
+
+  <!-- LAN demo: the host's primary IPv4 address is the SIP domain and the
+       address advertised in SDP.  With network_mode: host this is the real
+       LAN address (e.g. 192.168.1.10), which is what Zoiper must register to. -->
+  <X-PRE-PROCESS cmd="set" data="domain=$${local_ip_v4}"/>
+  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=$${local_ip_v4}"/>
+  <X-PRE-PROCESS cmd="set" data="external_sip_ip=$${local_ip_v4}"/>
+
+  <!-- G.711 only: mod_audio_stream + Pipecat both work in 8 kHz PCM16. -->
+  <X-PRE-PROCESS cmd="set" data="global_codec_prefs=PCMU,PCMA"/>
+  <X-PRE-PROCESS cmd="set" data="outbound_codec_prefs=PCMU,PCMA"/>
+</include>

@@ -14,7 +14,7 @@ INSERT INTO menu_items (category, item_name, aliases, variants) VALUES
 -- 1 to 7: Sandwiches
 ('Sandwiches', 'Beef Shawerma', ARRAY['شاورما لحمة', 'صاروخ لحمة', 'صاروخ شاورما لحمة', 'شاورما مصري لحمة'], '{"small": 65, "medium": 90, "large": 115}'),
 ('Sandwiches', 'Chicken Shawerma', ARRAY['شاورما فراخ', 'صاروخ فراخ', 'سوري فراخ', 'شاورما سوري'], '{"small": 60, "medium": 85, "large": 110}'),
-('Sandwiches', 'Beef Burger', ARRAY['برجر لحمة', 'برجر', 'همبرجر', 'ساندوتش برجر'], '{"single": 140, "double": 200, "triple": 260}'),
+('Sandwiches', 'Beef Burger', ARRAY['برجر لحمة', 'برجر', 'برغر', 'برقر', 'همبرجر', 'ساندوتش برجر', 'burger'], '{"single": 140, "double": 200, "triple": 260}'),
 ('Sandwiches', 'Chicken Burger', ARRAY['تشيكن برجر', 'برجر فراخ', 'ساندوتش فراخ بانيه'], '{"single": 125, "double": 180}'),
 ('Sandwiches', 'Shish Tawook', ARRAY['شيش طاووق', 'شيش', 'ساندوتش شيش'], '{"medium": 80, "large": 105}'),
 ('Sandwiches', 'Kofta Sandwich', ARRAY['كفتة', 'ساندوتش كفتة', 'كفتة حاتي', 'صاروخ كفتة'], '{"medium": 70, "large": 95}'),

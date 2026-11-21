@@ -14,13 +14,17 @@ class OrderCart:
         else:
             self.items[key] = matched_item
 
-    def update_qty(self, item_id: int, new_qty: int):
+    def update_qty(self, item_id: int, new_qty: int, variant: str | None = None):
+        # Variant-aware: "خلي الكولا واحدة" targets the cola line the customer
+        # meant. Without a variant, apply to the first matching line (the demo
+        # never holds two variants of the same item at once).
         for key in list(self.items.keys()):
-            if key[0] == item_id:
+            if key[0] == item_id and (variant is None or key[1] == variant):
                 if new_qty <= 0:
                     del self.items[key]
                 else:
                     self.items[key]["qty"] = new_qty
+                return  # first match only when variant is unspecified
 
     def total(self) -> int:
         items_sum = sum(i["unit_price"] * i["qty"] for i in self.items.values())
@@ -79,7 +83,8 @@ CONVERSATION_TURNS = [
 
 
 def run_demo():
-    DB_DSN = "postgresql://postgres:password@localhost:5432/restaurant_demo"
+    import os
+    DB_DSN = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/restaurant_demo")
     matcher = MenuMatcher(DB_DSN)
     matcher.load_and_index_menu()
     cart = OrderCart()
@@ -118,6 +123,15 @@ def run_demo():
                 elif act["action"] == "confirm_order":
                     print("\n ORDER COMMITTED TO DATABASE!")
                     print(cart.summary())
+
+    # --- acceptance asserts (non-owner verification, cc-script basket math) ---
+    # Turn 2: 2x large Beef Shawerma (115) + 2x cola can (25)  = 280
+    # Turn 4: 1x medium Pepperoni Pizza (170)                  = 450
+    # Turn 6: cola qty 1 (-25) + 1x small Tahini Salad (15)    = 440
+    # Turn 8: Maadi delivery                                   = 470
+    assert cart.total() == 470, f"expected total 470 EGP, got {cart.total()}"
+    assert len(cart.items) == 4, f"expected 4 order lines, got {len(cart.items)}"
+    print("\n ALL ASSERTS PASSED: total=470 EGP, 4 order lines.")
 
 
 if __name__ == "__main__":

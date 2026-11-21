@@ -1,0 +1,12 @@
+<configuration name="switch.conf" description="Core Configuration">
+  <settings>
+    <!-- Must match the published/exposed RTP range in docker-compose.yml. -->
+    <param name="rtp-start-port" value="16384"/>
+    <param name="rtp-end-port" value="16484"/>
+
+    <param name="max-sessions" value="100"/>
+    <param name="sessions-per-second" value="30"/>
+    <param name="loglevel" value="info"/>
+    <param name="dump-cores" value="no"/>
+  </settings>
+</configuration>

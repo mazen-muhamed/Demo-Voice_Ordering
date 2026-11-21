@@ -57,9 +57,16 @@ class MenuMatcher:
         )
         print(f"Indexed {len(self.menu_by_id)} items ({len(self.phrase_bank)} aliases).")
 
-    def match_single(self, raw_query: str, variant_key: str = None, vec_threshold: float = 0.84, fuzzy_threshold: int = 75) -> dict:
+    def match_single(self, raw_query: str, variant_key: str = None, vec_threshold: float = 0.84, item_margin: float = 0.02, fuzzy_threshold: int = 75) -> dict:
         """
         Match a spoken item phrase (e.g., 'صاروخ شاورما لحمة') and resolve variant price.
+
+        Acceptance is ITEM-level: e5-small scores every Arabic phrase high
+        (garbage like 'لبس أهلاوية' hits 0.88), so a bare score threshold
+        silently orders the wrong dish. The best item must beat the best
+        OTHER item by `item_margin` — aliases of the same item don't count
+        as competition. Measured: real matches 0.020-0.066 gap, garbage
+        0.000-0.008.
         """
         norm_query = normalize_arabic(raw_query)
 
@@ -74,12 +81,22 @@ class MenuMatcher:
         best_idx = int(np.argmax(scores))
         best_vec_score = float(scores[best_idx])
 
+        # Item-level ranking: best score per item, best vs runner-up ITEM
+        item_best: dict[int, float] = {}
+        for phrase_idx, score in enumerate(scores):
+            iid = self.phrase_to_id[phrase_idx]
+            if score > item_best.get(iid, -1.0):
+                item_best[iid] = float(score)
+        ranked = sorted(item_best.items(), key=lambda kv: kv[1], reverse=True)
+        best_item_id, best_item_score = ranked[0]
+        runner_item_score = ranked[1][1] if len(ranked) > 1 else 0.0
+
         matched_id = None
         method = "none"
         confidence = round(best_vec_score, 3)
 
-        if best_vec_score >= vec_threshold:
-            matched_id = self.phrase_to_id[best_idx]
+        if best_item_score >= vec_threshold and (best_item_score - runner_item_score) >= item_margin:
+            matched_id = best_item_id
             method = "e5_vector"
         else:
             # 2. RapidFuzz Fallback

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, status
 
 from .deps import get_service, hub
+from .errors import SessionNotFound
 from .fsm import TERMINAL
 from .schemas import (
     AddItem,
@@ -28,6 +29,15 @@ async def list_menu(svc: OrderingService = Svc):
 @router.post("/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 async def create_session(body: SessionCreate, svc: OrderingService = Svc):
     return svc.view(await svc.create(body.caller_number, body.ttl_seconds))
+
+
+@router.get("/sessions/by-caller/{caller}", response_model=SessionOut)
+async def get_session_by_caller(caller: str, svc: OrderingService = Svc):
+    """Resolve the live session for a call UUID (used by the ESL listener)."""
+    session = svc.find_by_caller(caller)
+    if session is None:
+        raise SessionNotFound("no live session for this caller")
+    return svc.view(session)
 
 
 @router.get("/sessions/{sid}", response_model=SessionOut)
@@ -78,8 +88,10 @@ async def dtmf(sid: str, body: DtmfIn, svc: OrderingService = Svc):
     return svc.view(await svc.press_dtmf(sid, body.digit))
 
 
-@ws_router.websocket("/ws/monitor")
-async def monitor(ws: WebSocket):
+# Spec event-bus name (TECHNICAL-REQUIREMENTS.md §5): the monitor page and the
+# pipeline both subscribe here. /ws/monitor was removed — do not re-add it.
+@ws_router.websocket("/ws/live")
+async def live(ws: WebSocket):
     svc = get_service()
     await hub.connect(ws)
     try:

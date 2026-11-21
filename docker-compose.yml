@@ -1,0 +1,136 @@
+name: voice-ordering-demo
+
+# Demo topology
+#   caller (Zoiper/MicroSIP) --SIP/RTP--> freeswitch (host network)
+#   freeswitch --mod_audio_stream--> ws://127.0.0.1:8765/ws?call_uuid=<uuid>
+#   freeswitch <--ESL 8021-- listener.py --> voice_ordering :8001
+#   voice_ordering --/ws/live--> monitor page
+#
+# FreeSWITCH and the ESL listener use network_mode: host so SIP/RTP never
+# crosses Docker NAT.  The Python services stay on the bridge network and
+# publish only the ports the host needs (8001, 8765, 5432).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-restaurant_demo}
+    ports:
+      # Host Postgres commonly owns 5432; keep the demo DB reachable on 5433.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./menu.sql:/docker-entrypoint-initdb.d/01_menu.sql:ro
+      - ./voice_ordering/schema_events.sql:/docker-entrypoint-initdb.d/02_events.sql:ro
+      - ./db/init/03_lexicon.sql:/docker-entrypoint-initdb.d/03_lexicon.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-restaurant_demo}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  freeswitch:
+    build:
+      context: .
+      dockerfile: Dockerfile.freeswitch
+      args:
+        FS_VERSION: ${FS_VERSION:-1.10.12}
+    image: voice-ordering/freeswitch:${FS_VERSION:-1.10.12}
+    container_name: vo-freeswitch
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      FS_ESL_PASSWORD: ${FS_ESL_PASSWORD:-ClueCon}
+      FS_LOCAL_IP: ${FS_LOCAL_IP:-}
+    volumes:
+      - fs_logs:/usr/local/freeswitch/log
+    healthcheck:
+      test: ["CMD-SHELL", "fs_cli -p \"$$FS_ESL_PASSWORD\" -x status 2>/dev/null | grep -q '^UP'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  voice_ordering:
+    build:
+      context: .
+      dockerfile: docker/voice_ordering/Dockerfile
+    image: voice-ordering/session-service:dev
+    container_name: vo-session
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-restaurant_demo}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/api/v1/menu >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  voice_agent:
+    build:
+      context: .
+      dockerfile: docker/voice_agent/Dockerfile
+    image: voice-ordering/voice-agent:dev
+    container_name: vo-agent
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-restaurant_demo}
+      SESSION_API_URL: http://voice_ordering:8001/api/v1
+      STT_BACKEND: ${STT_BACKEND:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      TTS_BACKEND: ${TTS_BACKEND:-edge}
+      EDGE_TTS_VOICE: ${EDGE_TTS_VOICE:-ar-EG-SalmaNeural}
+    ports:
+      - "8765:8765"
+    volumes:
+      # e5-small + Silero VAD survive container restarts
+      - hf_cache:/root/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      voice_ordering:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8765/docs >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  listener:
+    build:
+      context: .
+      dockerfile: docker/listener/Dockerfile
+    image: voice-ordering/esl-listener:dev
+    container_name: vo-listener
+    restart: unless-stopped
+    # Host networking: ESL is bound to 127.0.0.1:8021 by FreeSWITCH and the
+    # session service is published on 127.0.0.1:8001.
+    network_mode: host
+    environment:
+      FS_ESL_HOST: 127.0.0.1
+      FS_ESL_PORT: 8021
+      FS_ESL_PASSWORD: ${FS_ESL_PASSWORD:-ClueCon}
+      SESSION_API_URL: http://127.0.0.1:8001/api/v1
+      VOICE_AGENT_WS_URL: ws://127.0.0.1:8765/ws
+      SESSION_TTL_SECONDS: "300"
+      FS_TEMP_DIR: /tmp
+    depends_on:
+      freeswitch:
+        condition: service_healthy
+      voice_ordering:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  fs_logs:
+  hf_cache:

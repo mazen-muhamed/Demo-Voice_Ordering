@@ -68,7 +68,7 @@ def test_confirmation_expires():
 
 
 def test_websocket_receives_events():
-    with client.websocket_connect("/ws/monitor") as ws:
+    with client.websocket_connect("/ws/live") as ws:
         assert ws.receive_json()["type"] == "snapshot"
         sid = new()
         assert ws.receive_json()["type"] == "session_created"

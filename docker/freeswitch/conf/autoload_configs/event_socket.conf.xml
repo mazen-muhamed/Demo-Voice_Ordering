@@ -1,0 +1,11 @@
+<configuration name="event_socket.conf" description="Socket Client">
+  <settings>
+    <param name="nat-map" value="false"/>
+    <!-- Host networking: ESL is reachable on loopback only. -->
+    <param name="listen-ip" value="127.0.0.1"/>
+    <param name="listen-port" value="8021"/>
+    <!-- Replaced at container start by docker/freeswitch/entrypoint.sh -->
+    <param name="password" value="__ESL_PASSWORD__"/>
+    <param name="apply-inbound-acl" value="esl"/>
+  </settings>
+</configuration>
